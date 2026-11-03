@@ -32,29 +32,42 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
             ["asin"] = a => Math.Asin(One(a)), ["arcsin"] = a => Math.Asin(One(a)),
             ["acos"] = a => Math.Acos(One(a)), ["arccos"] = a => Math.Acos(One(a)),
             ["atan"] = a => Math.Atan(One(a)), ["arctan"] = a => Math.Atan(One(a)), ["arctg"] = a => Math.Atan(One(a)),
-            ["round"] = a => a.Length == 2 ? Math.Round(a[0], (int)a[1], MidpointRounding.AwayFromZero) : Math.Round(One(a), MidpointRounding.AwayFromZero),
+            ["round"] = a => a.Length == 2 ? RoundTo(a[0], a[1]) : Math.Round(One(a), MidpointRounding.AwayFromZero),
             ["floor"] = a => Math.Floor(One(a)), ["ceil"] = a => Math.Ceiling(One(a)),
             ["min"] = a => Many(a, Math.Min), ["max"] = a => Many(a, Math.Max),
         };
 
+        // in max(1,2) the comma separates arguments; in sqrt(2,25) it is a decimal comma
+        private static readonly HashSet<string> MultiArg = new() { "log", "round", "min", "max" };
+
+        // each nesting level costs several stack frames, and a stack overflow would take Flow down with it
+        private const int MaxLength = 256;
+
         private readonly string _s;
+        private readonly bool _commaGroups;
         private int _i;
         private bool _sawOperator;
+        private bool _commaArgs;
 
-        private Parser(string s) => _s = s;
+        private Parser(string s, bool commaGroups)
+        {
+            _s = s;
+            _commaGroups = commaGroups;
+        }
 
         /// <summary>sqrt, pi and the like say nothing about which language the query is in.</summary>
         public static bool IsMathWord(string word) => Constants.ContainsKey(word) || Functions.ContainsKey(word);
 
         /// <param name="hasOperator">false for a bare number, which is not worth answering</param>
-        public static bool TryEval(string text, out Value value, out bool hasOperator)
+        /// <param name="commaGroups">read "1,000" as a thousand, as English speakers write it, rather than as 1.000</param>
+        public static bool TryEval(string text, out Value value, out bool hasOperator, bool commaGroups = false)
         {
             value = default;
             hasOperator = false;
-            if (string.IsNullOrWhiteSpace(text))
+            if (string.IsNullOrWhiteSpace(text) || text.Length > MaxLength)
                 return false;
 
-            var p = new Parser(text);
+            var p = new Parser(text, commaGroups);
             try
             {
                 var v = p.Expr();
@@ -102,9 +115,9 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
                     var right = Unary();
                     left = new Value(c == '*' ? left.X * right.X : left.X / right.X, false);
                 }
-                else if (c == '(' || IsIdentStart(c))
+                else if (c == '(' || IsIdentStart(c) && _s[_i - 1] != ' ')
                 {
-                    // implicit multiplication: 2(3+1), 2pi
+                    // implicit multiplication: 2(3+1), 2pi; not "10 e", which is more likely "10 euro" being typed
                     _sawOperator = true;
                     var right = Unary();
                     left = new Value(left.X * right.X, false);
@@ -186,7 +199,7 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
                 _i++;
                 return v;
             }
-            if (char.IsDigit(c) || (c == '.' || c == ',') && _i + 1 < _s.Length && char.IsDigit(_s[_i + 1]))
+            if (char.IsDigit(c) || (c == '.' || c == ',' && !_commaArgs) && _i + 1 < _s.Length && char.IsDigit(_s[_i + 1]))
                 return new Value(Number(), false);
             if (c == '√')
             {
@@ -205,28 +218,54 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
                 if (Functions.TryGetValue(name, out var f))
                 {
                     _sawOperator = true;
-                    return new Value(f(Args()), false);
+                    return new Value(f(Args(MultiArg.Contains(name))), false);
                 }
             }
             throw new FormatException();
         }
 
-        private double[] Args()
+        private double[] Args(bool multi)
         {
             if (Peek() != '(')
                 return new[] { Postfix().X }; // sqrt 16, sin 30°
 
             _i++;
-            var args = new List<double> { Expr().X };
-            while (Peek() == ';' || Peek() == ',')
+            // round(3,14159; 2) keeps the decimal comma: ";" already separates the arguments
+            var outer = _commaArgs;
+            _commaArgs = multi && !HasSemicolon();
+            try
             {
+                var args = new List<double> { Expr().X };
+                while (Peek() == ';' || Peek() == ',')
+                {
+                    _i++;
+                    args.Add(Expr().X);
+                }
+                if (Peek() != ')')
+                    throw new FormatException();
                 _i++;
-                args.Add(Expr().X);
+                return args.ToArray();
             }
-            if (Peek() != ')')
-                throw new FormatException();
-            _i++;
-            return args.ToArray();
+            finally
+            {
+                _commaArgs = outer;
+            }
+        }
+
+        /// <summary>Whether the argument list that starts here has a ";" of its own.</summary>
+        private bool HasSemicolon()
+        {
+            var depth = 0;
+            for (var k = _i; k < _s.Length && depth >= 0; k++)
+            {
+                if (_s[k] == '(')
+                    depth++;
+                else if (_s[k] == ')')
+                    depth--;
+                else if (_s[k] == ';' && depth == 0)
+                    return true;
+            }
+            return false;
         }
 
         private double Number()
@@ -244,14 +283,22 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
                 grouped = true;
             }
 
-            // "1,000.50": a comma before three digits and a point is a thousands separator
-            while (_i + 4 < _s.Length && _s[_i] == ',' && IsDigits(_i + 1, 3) && _s[_i + 4] == '.')
+            // "1,000.50", "1,000,000" and, in English, "1,000": commas between groups of three digits
+            if (lead is > 0 and <= 3 && !grouped && !_commaArgs)
             {
-                sb.Append(_s, _i + 1, 3);
-                _i += 4;
+                var groups = 0;
+                while (IsCommaGroup(_i + groups * 4))
+                    groups++;
+                var end = _i + groups * 4;
+                if (groups > 0 && (_commaGroups || groups > 1 || end < _s.Length && _s[end] == '.'))
+                {
+                    for (var g = 0; g < groups; g++)
+                        sb.Append(_s, _i + g * 4 + 1, 3);
+                    _i = end;
+                }
             }
 
-            if (_i + 1 < _s.Length && (_s[_i] == '.' || _s[_i] == ',') && char.IsDigit(_s[_i + 1]))
+            if (_i + 1 < _s.Length && (_s[_i] == '.' || _s[_i] == ',' && !_commaArgs) && char.IsDigit(_s[_i + 1]))
             {
                 sb.Append('.');
                 _i++;
@@ -297,6 +344,9 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
             return true;
         }
 
+        private bool IsCommaGroup(int at) =>
+            at < _s.Length && _s[at] == ',' && IsDigits(at + 1, 3) && (at + 4 >= _s.Length || !char.IsDigit(_s[at + 4]));
+
         private char Peek()
         {
             SkipSpaces();
@@ -319,6 +369,17 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
             for (var k = 1; k < a.Length; k++)
                 r = f(r, a[k]);
             return r;
+        }
+
+        /// <summary>round(3.14159, 2) = 3.14, round(1234, -2) = 1200.</summary>
+        private static double RoundTo(double x, double digits)
+        {
+            if (digits != Math.Floor(digits))
+                throw new FormatException();
+            if (digits >= 0)
+                return Math.Round(x, (int)Math.Min(digits, 15), MidpointRounding.AwayFromZero); // a double has no more
+            var scale = Math.Pow(10, -digits);
+            return Math.Round(x / scale, MidpointRounding.AwayFromZero) * scale;
         }
 
         private static double Factorial(double x)

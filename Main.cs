@@ -15,18 +15,13 @@ namespace Flow.Launcher.Plugin.SmartCalc
         private const int TopScore = 1000;
 
         private PluginInitContext _context;
-        private string _regionalFormat;
 
-        public void Init(PluginInitContext context)
-        {
-            _context = context;
-            _regionalFormat = RegionalFormat();
-        }
+        public void Init(PluginInitContext context) => _context = context;
 
         public List<Result> Query(Query query)
         {
-            var locale = Calculator.PickLocale(query.Search, _regionalFormat);
-            return Calculator.Evaluate(query.Search, locale, plainArithmetic: !BuiltInCalculatorEnabled())
+            var locale = Calculator.PickLocale(query.Search, RegionalFormat());
+            return Calculator.Evaluate(query.Search, locale, BuiltInCalculatorEnabled)
                 .Select((a, i) => new Result
                 {
                     Title = a.Title,
@@ -45,7 +40,10 @@ namespace Flow.Launcher.Plugin.SmartCalc
             if (selected.ContextData is not Picked (var a, var locale))
                 return new List<Result>();
 
+            // 1385 or "1 h 11 min" read the same with either separator
             var other = locale.SwapDecimal(a.Copy);
+            if (other == a.Copy)
+                return new List<Result>();
             return new List<Result>
             {
                 new()
@@ -73,7 +71,8 @@ namespace Flow.Launcher.Plugin.SmartCalc
 
         /// <summary>
         /// The user's "Regional format" (ru-RU, en-US...). Flow replaces the thread culture with its own
-        /// interface language, so CultureInfo.CurrentCulture cannot be trusted here.
+        /// interface language, so CultureInfo.CurrentCulture cannot be trusted here. Read on every query
+        /// (it is cheap), so a change in Windows settings applies without restarting Flow.
         /// </summary>
         private static string RegionalFormat()
         {

@@ -25,7 +25,7 @@
 | `1.18 gb to mb` | 1,208.32 MB, and 1,180 MB counting in 1000s as drive makers do |
 | `100 mbps to mb/s` | 11.9209 MB/s |
 | `36.6 c to f` · `10 km in mi` · `2 kg to lb` · `60 km/h to m/s` · `6 ares to m2` | temperature, length, mass, speed, area |
-| `sqrt(16)+2` · `2^10` · `5!` · `sin(30°)` · `round(3.14159, 2)` | the usual maths |
+| `sqrt(16)+2` · `2^10` · `5!` · `sin(30°)` · `round(3.14159, 2)` · `max(1,2)` · `log(8,2)` | the usual maths |
 | `1 385-1220` · `1,18*1024` · `1920x1080` | spaces in numbers, decimal comma, `x` for times |
 
 Units: time (ms to years), data (bits, bytes, KB to TB in powers of 1024 like Windows, network speeds in powers of 1000), length, mass, volume, area, speed and temperature, in English and Russian spelling (`мин`, `гб`, `км/ч`, `соток`).
@@ -34,11 +34,11 @@ Units: time (ms to years), data (bits, bytes, KB to TB in powers of 1024 like Wi
 
 ### Answer language
 
-The answer follows the query: Russian words get a Russian answer (`1 208,32 МБ`), English words an English one (`1,208.32 MB`). Bare arithmetic like `520+2%` uses the number format from Windows' regional settings.
+The answer follows the query: Russian words get a Russian answer (`1 208,32 МБ`), English words an English one (`1,208.32 MB`). Bare arithmetic like `520+2%` uses the number format from Windows' regional settings. The format also decides what `1,000` means: a thousand in English, 1.000 in Russian.
 
 ### Next to the built-in Calculator
 
-If Flow's own Calculator plugin is enabled, Smart Calc leaves plain arithmetic like `2+2` to it and answers only what it cannot do: percentages, phrases and units. Disable the built-in one in *Settings → Plugins* to have Smart Calc answer everything in one style.
+If Flow's own Calculator plugin is enabled, Smart Calc leaves plain arithmetic like `2+2` (digits, `+ - * / ^` and brackets) to it and answers the rest: percentages, phrases, units, functions, `1 385`, `3x4`. Disable the built-in one in *Settings → Plugins* to have Smart Calc answer everything in one style.
 
 ## Install
 

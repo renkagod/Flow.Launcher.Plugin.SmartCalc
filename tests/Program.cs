@@ -5,11 +5,11 @@ using Flow.Launcher.Plugin.SmartCalc.Engine;
 
 var failed = 0;
 
-void Check(Locale locale, bool plainArithmetic, string query, string[] expected)
+void Check(Locale locale, bool builtInCalculator, string query, string[] expected)
 {
     // compare without spaces: Russian digit grouping uses narrow no-break spaces
     static string Squash(string s) => Regex.Replace(s, @"\s", "");
-    var got = Calculator.Evaluate(query, locale, plainArithmetic).Select(a => Squash(a.Title)).ToArray();
+    var got = Calculator.Evaluate(query, locale, () => builtInCalculator).Select(a => Squash(a.Title)).ToArray();
     expected = expected.Select(Squash).ToArray();
     var ok = expected.Length == 0 ? got.Length == 0 : got.Take(expected.Length).SequenceEqual(expected);
     if (!ok)
@@ -18,9 +18,9 @@ void Check(Locale locale, bool plainArithmetic, string query, string[] expected)
     Console.WriteLine($"{(ok ? "ok  " : "FAIL")} {lang} {query,-36} → {string.Join(" | ", got)}{(ok ? "" : "   expected: " + string.Join(" | ", expected))}");
 }
 
-void Ru(string query, params string[] expected) => Check(Locale.Russian, true, query, expected);
-void En(string query, params string[] expected) => Check(Locale.English, true, query, expected);
-void WithBuiltIn(string query, params string[] expected) => Check(Locale.English, false, query, expected);
+void Ru(string query, params string[] expected) => Check(Locale.Russian, false, query, expected);
+void En(string query, params string[] expected) => Check(Locale.English, false, query, expected);
+void WithBuiltIn(string query, params string[] expected) => Check(Locale.English, true, query, expected);
 
 // arithmetic and Google-style percentages
 Ru("520+2%", "530,4");
@@ -43,7 +43,18 @@ Ru("1920х1080", "2073600");
 Ru("round(3.14159, 2)*1", "3,14");
 Ru("5!", "120");
 Ru("10/0");
+Ru("round(3.14, 20)", "3,14");
+Ru("round(1234, -2)", "1200");
+Ru("round(3,14159; 2)", "3,14");
+Ru("max(1,2)", "2");
+Ru("log(8,2)", "3");
+Ru("sqrt(2,25)", "1,5");
+Ru("1,000*2", "2");
+Ru("2pi", "6,283185307");
 En("1,000.50+1", "1,001.5");
+En("1,000*2", "2,000");
+En("1,000,000.5+1", "1,000,001.5");
+En("1,5*2", "3");
 En("2*pi", "6.283185307");
 
 // phrases
@@ -79,10 +90,16 @@ En("100 c", "212°F");
 En("10 km in mi", "6.21371mi");
 En("5 ft", "1.524m");
 En("3 hours", "180min");
+En("300 kelvin", "26.85°C");
 
-// with Flow's own calculator enabled, leave plain arithmetic to it
+// with Flow's own calculator enabled, leave plain arithmetic to it, but not what only this plugin reads
 WithBuiltIn("2+2");
+WithBuiltIn("(2+3)*4");
 WithBuiltIn("520+2%", "530.4");
+WithBuiltIn("1 385-1220", "165");
+WithBuiltIn("3x4", "12");
+WithBuiltIn("2pi", "6.283185307");
+WithBuiltIn("1,000*2", "2,000");
 WithBuiltIn("1.18 gb to mb", "1,208.32MB", "1,180MB");
 
 // answer language follows the query, bare maths follows Windows' regional format
@@ -102,7 +119,9 @@ Picks("3x4", "ru-RU", true);
 
 // must stay silent: other plugins own these
 foreach (var q in new[] { "100", "h", "lab01", "1000 rub", "100 usd to kzt", "5000 руб в евро", "12:30", "e", "pi",
-                          "throne exe", "2024", "d:\\резюме\\", "lab01 pdf", "test-aggro.cmd", "windows 11", "mp3", "7zip" })
+                          "throne exe", "2024", "d:\\резюме\\", "lab01 pdf", "test-aggro.cmd", "windows 11", "mp3", "7zip",
+                          "2024-01-15", "15/01/2024", "8-800-555-35-35", "+7-900-123-45-67", "10 e", "5k", "100k",
+                          new string('(', 30000) + "1", new string('-', 30000) + "1" })
     Ru(q);
 
 Console.WriteLine(failed == 0 ? "\nall passed" : $"\nfailed: {failed}");

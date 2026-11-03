@@ -33,7 +33,13 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
         // an amount (any expression ending in a digit, bracket, π or %) followed by a unit; m2, км2 may end in a digit
         private static readonly Regex Quantity = new(@"^(?<e>.*?[\d)π%])\s*(?<u>[^\s\d()+\-*^!%=]+[23]?(?:\s*/\s*[^\s\d()]+)?)$", Opts);
 
-        private static readonly Regex TimesSign = new(@"(?<=[\d)])\s*[xх×]\s*(?=[\d(.,])", Opts);
+        // 2024-01-15, 15/01/2024, 8-800-555-35-35 are pasted dates and phone numbers, not subtraction
+        private static readonly Regex DateOrPhone = new(@"^\+?\d+(?:-\d+){2,}$|^\d{1,2}/\d{1,2}/\d{2,4}$", Opts);
+
+        // what Flow's built-in Calculator reads the same way: no x for times, no "1 385", no functions or phrases
+        private static readonly Regex BuiltInSyntax = new(@"^(?!.*\d\s+\d)[\d.+\-*/^()\s]+$", Opts);
+
+        private static readonly Regex TimesSign =new(@"(?<=[\d)])\s*[xх×]\s*(?=[\d(.,])", Opts);
         private static readonly Regex Spaces = new(@"\s+", Opts);
         private static readonly Regex Cyrillic = new(@"\p{IsCyrillic}", Opts);
         private static readonly Regex LatinWord = new(@"[a-z]+", Opts | RegexOptions.IgnoreCase);
@@ -52,11 +58,11 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
             return Locale.For(regionalFormat);
         }
 
-        /// <param name="plainArithmetic">
-        /// false while Flow's built-in Calculator is enabled: it already answers 2+2, so only
-        /// what it cannot do (percentages, units, phrases) is answered here.
+        /// <param name="builtInCalculator">
+        /// whether Flow's built-in Calculator is enabled: it already answers 2+2, so such plain arithmetic
+        /// is left to it. Asked only when the query is such arithmetic.
         /// </param>
-        public static List<Answer> Evaluate(string raw, Locale locale, bool plainArithmetic = true)
+        public static List<Answer> Evaluate(string raw, Locale locale, Func<bool> builtInCalculator = null)
         {
             var q = Normalize(raw);
             // a digit is required, otherwise "e" or "pi" would answer while you type an app name
@@ -64,8 +70,9 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
                 return new List<Answer>();
 
             var c = new Context(locale);
+            var leaveToBuiltIn = builtInCalculator != null && BuiltInSyntax.IsMatch(raw.Trim()) && builtInCalculator();
             return c.Change(q) ?? c.PercentOf(q) ?? c.AsPercent(q) ?? c.Ratio(q)
-                ?? c.Conversion(q) ?? c.Quantity(q) ?? c.Expression(q, plainArithmetic) ?? new List<Answer>();
+                ?? c.Conversion(q) ?? c.Quantity(q) ?? (leaveToBuiltIn ? null : c.Expression(q)) ?? new List<Answer>();
         }
 
         private static string Normalize(string raw)
@@ -89,6 +96,9 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
 
             public Context(Locale locale) => _l = locale;
 
+            // an English answer means an English reader, for whom 1,000 is a thousand
+            private bool CommaGroups => !_l.IsRussian;
+
             public List<Answer> Change(string q)
             {
                 var m = Calculator.Change.Match(q);
@@ -111,7 +121,7 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
             public List<Answer> AsPercent(string q)
             {
                 var m = Calculator.AsPercent.Match(q);
-                if (!m.Success || !Parser.TryEval(m.Groups["e"].Value, out var v, out _))
+                if (!m.Success || !Parser.TryEval(m.Groups["e"].Value, out var v, out _, CommaGroups))
                     return null;
                 var pct = v.X * 100;
                 return One(_l.Number(pct, 2) + _l.Percent, string.Format(_l.AsPercent, m.Groups["e"].Value), _l.Copy(pct, 2));
@@ -179,11 +189,9 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
                 return answers.Count > 0 ? answers : null;
             }
 
-            public List<Answer> Expression(string q, bool plainArithmetic)
+            public List<Answer> Expression(string q)
             {
-                if (!plainArithmetic && !q.Contains('%'))
-                    return null;
-                if (!Parser.TryEval(q, out var v, out var hasOperator) || !hasOperator)
+                if (DateOrPhone.IsMatch(q) || !Parser.TryEval(q, out var v, out var hasOperator, CommaGroups) || !hasOperator)
                     return null;
                 return v.Percent
                     ? One(_l.Number(v.X * 100) + _l.Percent, _l.CopyHint, _l.Copy(v.X * 100))
@@ -223,7 +231,7 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
                 return new Answer($"{_l.Amount(value)} {to.Name(_l)}", _l.DecimalBytes, _l.CopyAmount(value));
             }
 
-            private static bool TryQuantity(string text, out double amount, out Unit unit)
+            private bool TryQuantity(string text, out double amount, out Unit unit)
             {
                 amount = 0;
                 unit = null;
@@ -235,9 +243,9 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
             }
 
             /// <summary>A plain (non-percent) expression, including a bare number.</summary>
-            private static bool Plain(string text, out double value)
+            private bool Plain(string text, out double value)
             {
-                var ok = Parser.TryEval(text, out var v, out _) && !v.Percent;
+                var ok = Parser.TryEval(text, out var v, out _, CommaGroups) && !v.Percent;
                 value = v.X;
                 return ok;
             }

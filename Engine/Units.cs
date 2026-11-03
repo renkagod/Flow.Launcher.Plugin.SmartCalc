@@ -84,7 +84,7 @@ namespace Flow.Launcher.Plugin.SmartCalc.Engine
 
             new(Kind.Temperature, "°C", "°C", 1, new[] { "c", "°c", "℃", "celsius", "цельсий", "цельсия" }, "°F"),
             new(Kind.Temperature, "°F", "°F", 5.0 / 9, new[] { "f", "°f", "℉", "fahrenheit", "фаренгейт", "фаренгейта" }, "°C", -160.0 / 9),
-            new(Kind.Temperature, "K", "K", 1, new[] { "k", "kelvin", "кельвин", "кельвина", "кельвинов" }, "°C", -273.15),
+            new(Kind.Temperature, "K", "K", 1, new[] { "kelvin", "кельвин", "кельвина", "кельвинов" }, "°C", -273.15),
         };
 
         private static readonly Dictionary<string, Unit> ByAlias = All
