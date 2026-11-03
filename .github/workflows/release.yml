@@ -1,0 +1,57 @@
+name: Build and release
+
+# Every push is tested and built. A release is published when plugin.json carries a version
+# that has no release yet, and the Flow Launcher plugin store picks it up from there.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      DOTNET_NOLOGO: 1
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Test
+        run: dotnet run --project tests -c Release
+
+      - name: Build
+        run: dotnet build Flow.Launcher.Plugin.SmartCalc.csproj -c Release -o out
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content plugin.json -Raw | ConvertFrom-Json).Version
+          gh release view "v$version" *> $null
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "released=$($LASTEXITCODE -eq 0)" >> $env:GITHUB_OUTPUT
+          $global:LASTEXITCODE = 0
+
+      - name: Package
+        if: github.event_name != 'pull_request' && steps.version.outputs.released == 'False'
+        shell: pwsh
+        run: Compress-Archive -Path out/* -DestinationPath Flow.Launcher.Plugin.SmartCalc.zip
+
+      - name: Publish release
+        if: github.event_name != 'pull_request' && steps.version.outputs.released == 'False'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          files: Flow.Launcher.Plugin.SmartCalc.zip
+          generate_release_notes: true
